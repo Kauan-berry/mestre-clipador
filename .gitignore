@@ -1,0 +1,10 @@
+# arquivos gerados pelo programa
+gravacoes/
+clipes_prontos/
+videos_baixados/
+estado.json
+log.txt
+__pycache__/
+
+# moldura pessoal de cada um
+moldura.png

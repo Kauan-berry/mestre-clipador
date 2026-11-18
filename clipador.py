@@ -186,10 +186,13 @@ class Gravador(threading.Thread):
             log("LIVE NO AR! Gravando...")
             avisar(self.cfg, "🔴 A live comecou e o clipador esta gravando.")
             self.ativo = True
-            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error",
+            # -copyts: mantem o relogio original da live. Sem isso, quando o YouTube manda
+            # video e audio separados, cada um comeca do zero e o audio fica dessincronizado.
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-copyts",
                    "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "10",
                    "-i", link[0]]
             if len(link) > 1:  # video e audio separados
+                log("(a live veio com video e audio separados; sincronizando pelo relogio da live)")
                 cmd += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "10",
                         "-i", link[1], "-map", "0:v:0", "-map", "1:a:0"]
             cmd += ["-c", "copy", "-f", "segment",

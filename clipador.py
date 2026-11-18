@@ -153,6 +153,12 @@ class Gravador(threading.Thread):
         self.cfg = cfg
         self.ativo = False
         self.parar = False
+        self.proc = None
+
+    def reiniciar(self):
+        """Derruba a gravacao atual; o loop pega um link novo e grava de novo."""
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
 
     def link_do_video(self):
         cmd = [sys.executable, "-m", "yt_dlp", "-g", "--no-warnings",
@@ -198,7 +204,8 @@ class Gravador(threading.Thread):
             cmd += ["-c", "copy", "-f", "segment",
                    "-segment_time", str(self.cfg["seg_bloco"]),
                    str(GRAV / f"bloco_{sessao}_%04d.ts")]
-            subprocess.run(cmd)
+            self.proc = subprocess.Popen(cmd)
+            self.proc.wait()
             self.ativo = False
             log("A gravacao parou (live acabou ou o link expirou). Tentando de novo em 20s...")
             time.sleep(20)
@@ -466,6 +473,9 @@ def processar_bloco(cfg, estado, blocos, idx, pos_live):
     atual = blocos[idx]
     anterior = blocos[idx - 1] if idx > 0 and blocos[idx - 1].stem.rsplit("_", 1)[0] == atual.stem.rsplit("_", 1)[0] else None
     db = volume_por_segundo(atual)
+    if len(db) == 0:
+        log(f"{atual.name}: bloco SEM AUDIO (a conexao do audio caiu).")
+        return "sem_audio"
     picos = achar_picos(db, estado["historico_db"], cfg)
     estado["historico_db"] += db.tolist()
     if not picos:
@@ -534,7 +544,10 @@ def loop_processamento(cfg, gravador=None, arquivo_unico=None):
                 continue
             pos = mesma_sessao.index(b) * cfg["seg_bloco"]
             try:
-                processar_bloco(cfg, estado, blocos, i, pos)
+                r = processar_bloco(cfg, estado, blocos, i, pos)
+                if r == "sem_audio" and gravador is not None and gravador.ativo:
+                    log("Reiniciando a gravacao para recuperar o audio...")
+                    gravador.reiniciar()
             except Exception as ex:
                 log(f"Erro processando {b.name}: {ex}")
             estado["processados"].append(b.name)

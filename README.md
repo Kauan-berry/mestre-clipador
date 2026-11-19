@@ -122,6 +122,11 @@ Esse exemplo pega uma câmera no **canto superior direito**. Para achar os núme
 | `cublas64_12.dll` | Normal em PCs com placa NVIDIA: ele usa o processador automaticamente. |
 | PC travando | `modelo_legenda = base` |
 | Muitos clipes ruins | Aumente o `rigor` para 99. |
+| Trocou de streamer e chegam clipes do anterior | Na v1.1+ ele limpa sozinho quando o `link_da_live` muda. Em versões antigas, rode o `LIMPAR_TESTE.bat` antes de iniciar. |
+| Emoji aparece como quadradinho no vídeo | A fonte do vídeo não tem emoji: deixe o `credito_no_video` só com texto. No `credito_na_legenda` pode usar emoji. |
+| Clipes repetindo o mesmo trecho | Deixe `intervalo_minimo_entre_clipes` maior ou igual ao tamanho do clipe (antes + depois). |
+| Erro `3221225786` no log | A janela foi fechada no meio de um corte. Não é bug. |
+| Chegam clipes demais | Ex.: `minutos_por_bloco = 20`, `minimo_clipes_por_bloco = 1`, `max_clipes_por_bloco = 2`, `rigor = 99` (uns 3 a 6 por hora). |
 
 Os clipes também ficam salvos na pasta **`clipes_prontos`**.
 

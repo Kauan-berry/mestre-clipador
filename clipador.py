@@ -44,7 +44,7 @@ GRAV = PASTA / "gravacoes"
 SAIDA = PASTA / "clipes_prontos"
 ESTADO = PASTA / "estado.json"
 TAXA_AUDIO = 8000
-VERSAO = "1.0"
+VERSAO = "1.1"
 _A = "RmVpdG8gY29tIG1lc3RyZS1jbGlwYWRvcg=="
 
 
@@ -514,6 +514,19 @@ def limpar_antigos(cfg, blocos_processados):
             pass
 
 
+def trocar_de_live_se_preciso(cfg):
+    """Se o link mudou desde a ultima vez, apaga as gravacoes e a memoria da live antiga.
+    Assim nao chegam clipes do streamer anterior e o 'volume normal' comeca do zero."""
+    estado = ler_estado()
+    antigo = estado.get("url")
+    if antigo and antigo != cfg["url"]:
+        log(f"Link mudou ({antigo} -> {cfg['url']}). Limpando gravacoes e memoria da live antiga...")
+        shutil.rmtree(GRAV, ignore_errors=True)
+        estado = {"processados": [], "historico_db": []}
+    estado["url"] = cfg["url"]
+    salvar_estado(estado)
+
+
 def loop_processamento(cfg, gravador=None, arquivo_unico=None):
     estado = ler_estado()
     if arquivo_unico:
@@ -680,6 +693,7 @@ def main():
     log(f"Camera: {cfg['camera'] or 'nenhuma (linha camera = vazia ou ausente)'}")
     log(f"Clipador ligado. Vigiando: {cfg['url']}")
     avisar(cfg, f"🟢 Clipador ligado. Vigiando: {cfg['url']}\n{_assinatura()}")
+    trocar_de_live_se_preciso(cfg)
     g = Gravador(cfg)
     g.start()
     try:

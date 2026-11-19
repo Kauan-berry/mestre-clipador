@@ -1,4 +1,6 @@
-﻿#define MyVer "2.0"
+﻿#ifndef MyVer
+#define MyVer "2.0"
+#endif
 [Setup]
 AppName=mestre-clipador
 AppVersion={#MyVer}

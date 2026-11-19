@@ -3,7 +3,11 @@ name: instalador-windows
 on:
   workflow_dispatch:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths:
+      - "app/**"
+      - "build/**"
+      - ".github/workflows/instalador.yml"
 
 permissions:
   contents: write
@@ -17,6 +21,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Versao
+        id: versao
+        shell: pwsh
+        run: |
+          $v = [regex]::Match((Get-Content app/motor.py -Raw), 'VERSAO = "([^"]+)"').Groups[1].Value
+          "v=$v" >> $env:GITHUB_OUTPUT
 
       - name: Bibliotecas
         run: |
@@ -66,7 +77,7 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" build/instalador.iss
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyVer=${{ steps.versao.outputs.v }} build/instalador.iss
           Get-ChildItem build/Output
 
       - uses: actions/upload-artifact@v4
@@ -75,10 +86,12 @@ jobs:
           path: build/Output/*.exe
 
       - name: Publicar no Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: mestre-clipador ${{ github.ref_name }}
+          tag_name: v${{ steps.versao.outputs.v }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          name: mestre-clipador v${{ steps.versao.outputs.v }}
           files: build/Output/*.exe
           body: |
             Instalador do mestre-clipador para Windows 10/11.

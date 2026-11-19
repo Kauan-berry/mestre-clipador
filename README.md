@@ -8,6 +8,31 @@ O **mestre-clipador** fica de olho numa live (YouTube, Twitch ou Kick), grava e 
 
 ---
 
+## 🆕 Versão app (v2): tudo dentro de uma janela
+
+Agora o mestre-clipador também é um **aplicativo**: sem pastas, sem `config.ini`, sem janela preta.
+
+1. Baixe o projeto (**Code → Download ZIP**) e extraia.
+2. Rode o **`APP_1_INSTALAR.bat`**. Na primeira vez ele instala Python, FFmpeg e Deno; quando pedir, rode de novo. No fim ele cria o atalho **mestre-clipador** na Área de Trabalho.
+3. Abra pelo atalho. O app tem 4 telas:
+   - **Início:** cole o link de uma live, de um canal ou de um vídeo e clique em **Clipar**. Live ou canal: ele vigia e grava sozinho quando a live abrir (vários streamers ao mesmo tempo). Vídeo gravado: clipa o vídeo inteiro.
+   - **Galeria (Kanban):** cada momento chega como **prévia crua**. Você assiste e **aprova** ou **descarta**. Só o aprovado é emoldurado e vai pro Telegram.
+   - **Ajustes:** um perfil por streamer — formato, moldura, câmera (marcada arrastando um retângulo na imagem da live), créditos, tamanho e quantidade de clipes. A prévia 9:16 muda na hora.
+   - **Telegram:** 3 passos para conectar o bot, com teste de envio.
+
+**Prazos da Galeria** (o app apaga sozinho):
+
+| Coluna | Fica | Depois |
+| --- | --- | --- |
+| Clipados | 2 dias úteis | vai para Arquivados |
+| Autorizados | 1 dia | apagado do PC (já está no Telegram) |
+| Descartados | 1 hora (ou 2, nos Ajustes) | apagado |
+| Arquivados | 1 semana | apagado |
+
+Os dados do app ficam em `%LOCALAPPDATA%\mestre-clipador`. A versão antiga (com `.bat` e `config.ini`) continua abaixo e funcionando.
+
+---
+
 ## ✨ O que ele faz
 
 - 🔴 **Espera a live começar sozinho** e grava em blocos.

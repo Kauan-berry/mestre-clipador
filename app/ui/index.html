@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mestre-clipador</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="menu" aria-label="Menu principal">
+    <div class="marca">mestre<span>-</span>clipador</div>
+    <a href="#inicio" data-tela="inicio">Início</a>
+    <a href="#galeria" data-tela="galeria">Galeria <span class="contador" id="cont-galeria"></span></a>
+    <a href="#ajustes" data-tela="ajustes">Ajustes</a>
+    <a href="#telegram" data-tela="telegram">Telegram <span class="alerta" id="alerta-tg" hidden>!</span></a>
+    <div class="rodape-menu">
+      <div id="trabalho" class="trabalho"></div>
+      <div id="versao" class="versao"></div>
+    </div>
+  </nav>
+  <main id="tela" class="conteudo"></main>
+</div>
+
+<dialog id="player" class="modal">
+  <div class="modal-topo"><strong id="player-titulo">Prévia</strong><button type="button" class="botao-sec" data-fechar>Fechar</button></div>
+  <video id="player-video" controls playsinline></video>
+  <div id="player-acoes" class="linha"></div>
+</dialog>
+
+<dialog id="camera" class="modal modal-largo">
+  <div class="modal-topo"><strong>Marque a câmera do streamer</strong><button type="button" class="botao-sec" data-fechar>Fechar</button></div>
+  <p class="suave">Clique e arraste um retângulo em volta da câmera.</p>
+  <div id="camera-area" class="camera-area"><img id="camera-img" alt="Imagem da live"><div id="camera-ret" class="camera-ret" hidden></div></div>
+  <div class="linha"><span id="camera-valor" class="suave"></span><button type="button" class="botao" id="camera-salvar">Usar esta área</button></div>
+</dialog>
+
+<div id="aviso" class="aviso" role="status" aria-live="polite" hidden></div>
+<script src="/ui/app.js"></script>
+</body>
+</html>

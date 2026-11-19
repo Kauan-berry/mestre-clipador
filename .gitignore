@@ -8,3 +8,6 @@ __pycache__/
 
 # moldura pessoal de cada um
 moldura.png
+
+# app
+app/__pycache__/

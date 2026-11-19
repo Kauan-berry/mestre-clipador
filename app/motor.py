@@ -28,7 +28,7 @@ try:
 except ImportError:  # pragma: no cover
     requests = None
 
-VERSAO = "2.0"
+VERSAO = "2.1"
 _A = "RmVpdG8gY29tIG1lc3RyZS1jbGlwYWRvcg=="
 TAXA_AUDIO = 8000
 SEM_JANELA = 0x08000000 if os.name == "nt" else 0  # nao abre janela preta no Windows
@@ -289,26 +289,25 @@ def limpar_token(t):
 
 # ====================================================================== monitor
 class Monitor(threading.Thread):
-    """Vigia a live de UM streamer e grava em blocos .ts."""
+    """Grava a live de UM canal de um streamer (no maximo uma por streamer)."""
 
-    def __init__(self, motor, sid):
+    OFFLINE_FIM = 300  # depois de gravar, 5 min offline = a live acabou
+
+    def __init__(self, motor, sid, sessao_id, canal):
         super().__init__(daemon=True)
         self.motor = motor
         self.sid = sid
-        self.pasta = motor.dados / "gravacoes" / str(sid)
-        shutil.rmtree(self.pasta, ignore_errors=True)  # sempre comeca limpo: nada de sobra de outra live
+        self.sessao_id = sessao_id
+        self.canal = canal
+        self.pasta = motor.dados / "gravacoes" / str(sessao_id)
         self.pasta.mkdir(parents=True, exist_ok=True)
         self.parar = False
         self.gravando = False
-        self.desde = None
-        self.status = "Procurando a live..."
+        self.ja_gravou = False
+        self.status = "esperando"
         self.proc = None
         self.historico = []
         self.processados = set()
-        self.clipes_sessao = 0
-
-    def s(self):
-        return self.motor.banco.streamer(self.sid)
 
     def reiniciar(self):
         if self.proc and self.proc.poll() is None:
@@ -318,64 +317,63 @@ class Monitor(threading.Thread):
         self.parar = True
         self.reiniciar()
 
-    def link_do_video(self, s):
-        q = self.motor.banco.cfg("qualidade") or "720"
-        cmd = [*YTDLP, "-g", "--no-warnings",
-               "-f", f"b[height<={q}]/bv*[height<={q}]+ba/b/bv*+ba"]
-        cookies = self.motor.banco.cfg("cookies_navegador")
-        if cookies:
-            cmd += ["--cookies-from-browser", cookies]
-        cmd.append(s["link"])
-        r = rodar(cmd, text=True)
-        if r.returncode != 0:
-            ult = (r.stderr or "").strip().splitlines()[-1:] or [""]
-            return None, ult[0]
-        linhas = [l for l in r.stdout.strip().splitlines() if l.startswith("http")]
-        return (linhas[:2] if linhas else None), ""
+    def _status(self, st, **extra):
+        self.status = st
+        self.motor.banco.atualizar_sessao(self.sessao_id, status=st, **extra)
 
     def run(self):
+        offline_desde = None
         while not self.parar:
-            s = self.s()
-            if not s:
-                return
-            link, erro = self.link_do_video(s)
+            link, erro = self.motor.link_do_video(self.canal["link"])
             if self.parar:
-                return
+                break
             if not link:
                 self.gravando = False
-                self.status = "Esperando a live começar"
-                if "No module named" in erro:
-                    self.status = "Falta instalar o yt-dlp (rode o INSTALAR)"
-                elif "not a bot" in erro.lower() or "sign in" in erro.lower():
-                    self.status = "YouTube pediu login: configure os cookies nos Ajustes"
-                for _ in range(60):
+                if self.ja_gravou:
+                    offline_desde = offline_desde or time.time()
+                    if time.time() - offline_desde > self.OFFLINE_FIM:
+                        break  # a live acabou
+                    self._status("reconectando")
+                else:
+                    self._status("esperando", erro=erro_amigavel(erro))
+                for _ in range(45):
                     if self.parar:
-                        return
+                        break
                     time.sleep(1)
                 continue
+            offline_desde = None
             sessao = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.gravando = True
-            self.desde = self.desde or time.time()
-            self.status = "Gravando"
-            self.motor.log(f"[{s['nome']}] live no ar, gravando.")
+            if not self.ja_gravou:
+                self.motor.banco.atualizar_sessao(self.sessao_id, inicio=time.time())
+            self.ja_gravou = True
+            self._status("gravando", erro="")
+            s = self.motor.banco.streamer(self.sid) or {}
+            self.motor.log(f"[{s.get('nome', self.sid)}] live no ar ({self.canal['plataforma']}), gravando.")
             cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-copyts",
                    "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "10",
                    "-i", link[0]]
             if len(link) > 1:
                 cmd += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "10",
                         "-i", link[1], "-map", "0:v:0", "-map", "1:a:0"]
-            cmd += ["-c", "copy", "-f", "segment", "-segment_time", str(int(s["bloco_min"]) * 60),
+            cmd += ["-c", "copy", "-f", "segment", "-segment_time", str(int(s.get("bloco_min") or 10) * 60),
                     str(self.pasta / f"bloco_{sessao}_%04d.ts")]
             kw = {"creationflags": SEM_JANELA} if SEM_JANELA else {}
             self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kw)
             self.proc.wait()
             self.gravando = False
             if not self.parar:
-                self.status = "Reconectando..."
-                time.sleep(10)
+                self._status("reconectando")
+                time.sleep(5)
+        self.gravando = False
+        if self.ja_gravou:
+            self.motor.banco.atualizar_sessao(self.sessao_id, status="finalizada", fim=time.time())
+        else:  # parou antes da live comecar: nao deixa uma "live" vazia na lista
+            self.motor.banco.x("DELETE FROM sessoes WHERE id=?", (self.sessao_id,))
+        self.status = "finalizada"
+        self.motor.monitor_terminou(self)
 
     def blocos_prontos(self):
-        """Blocos completos ainda nao processados (o ultimo de cada sessao esta sendo gravado)."""
         blocos = sorted(self.pasta.glob("bloco_*.ts"))
         prontos = []
         for b in blocos:
@@ -389,18 +387,28 @@ class Monitor(threading.Thread):
         return prontos
 
 
+def erro_amigavel(erro):
+    e = (erro or "").lower()
+    if "no module named" in e:
+        return "Falta instalar o yt-dlp"
+    if "not a bot" in e or "sign in" in e:
+        return "O YouTube pediu login: configure nos Ajustes (Geral)"
+    return ""
+
+
 # ====================================================================== motor
 class Motor:
     def __init__(self, banco, dados):
         self.banco = banco
         self.dados = Path(dados)
-        (self.dados / "clipes").mkdir(parents=True, exist_ok=True)
-        (self.dados / "molduras").mkdir(parents=True, exist_ok=True)
-        self.monitores = {}
-        self.fila = queue.PriorityQueue()
+        for p in ("clipes", "molduras", "gravacoes"):
+            (self.dados / p).mkdir(parents=True, exist_ok=True)
+        self.monitores = {}           # streamer_id -> Monitor (1 live por streamer)
+        self.fila = queue.PriorityQueue()      # lives e acabamento
+        self.fila_videos = queue.Queue()       # videos gravados: fila propria, nao atrasa as lives
         self.seq = 0
         self.trabalhando = ""
-        self.videos = {}  # jobs de video comum: id -> status
+        self.trabalhando_video = ""
         self.logs = []
         self.lock = threading.Lock()
         self.rodando = True
@@ -421,16 +429,51 @@ class Motor:
             self.seq += 1
             self.fila.put((prioridade, self.seq, tarefa, args))
 
+    def ytdlp(self, *args):
+        cmd = [*YTDLP, "--no-warnings"]
+        cookies = self.banco.cfg("cookies_navegador")
+        if cookies:
+            cmd += ["--cookies-from-browser", cookies]
+        return cmd + list(args)
+
+    def link_do_video(self, link):
+        q = self.banco.cfg("qualidade") or "720"
+        r = rodar(self.ytdlp("-g", "-f", f"b[height<={q}]/bv*[height<={q}]+ba/b/bv*+ba", link), text=True)
+        if r.returncode != 0:
+            return None, ((r.stderr or "").strip().splitlines()[-1:] or [""])[0]
+        linhas = [l for l in r.stdout.strip().splitlines() if l.startswith("http")]
+        return (linhas[:2] if linhas else None), ""
+
+    def info_link(self, link, timeout=90):
+        try:
+            r = rodar(self.ytdlp("-J", "--no-download", "--flat-playlist", "--playlist-end", "1", link),
+                      text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None, "demorou demais"
+        if r.returncode != 0:
+            return None, ((r.stderr or "").strip().splitlines() or ["?"])[-1]
+        try:
+            return json.loads(r.stdout), ""
+        except ValueError:
+            return None, "resposta inválida"
+
     # ------------------------------------------------------------ inicio
     def iniciar(self):
-        # clipes que estavam "emoldurando" quando o app fechou voltam pra fila
         for c in self.banco.q("SELECT id FROM clips WHERE coluna='autorizados' AND acabamento IN ('fila','emoldurando')"):
             self.enfileirar(0, "acabamento", c["id"])
-        for s in self.banco.streamers():
-            if s["vigiando"]:
-                self.vigiar(s["id"])
+        for s in self.banco.sessoes():
+            if s["tipo"] == "live" and s["status"] in ("esperando", "gravando", "reconectando"):
+                canal = self.banco.canal(s["canal_id"])
+                if canal and s["streamer_id"] not in self.monitores:
+                    self._iniciar_monitor(s["streamer_id"], s["id"], canal)
+                else:
+                    self.banco.atualizar_sessao(s["id"], status="finalizada", fim=time.time())
+            if s["tipo"] == "video" and s["status"] in ("na_fila", "baixando", "clipando"):
+                self.banco.atualizar_sessao(s["id"], status="na_fila")
+                self.fila_videos.put(s["id"])
         threading.Thread(target=atualizar_ytdlp, args=(self.log,), daemon=True).start()
         threading.Thread(target=self._trabalhador, daemon=True).start()
+        threading.Thread(target=self._trabalhador_videos, daemon=True).start()
         threading.Thread(target=self._varredor, daemon=True).start()
         threading.Thread(target=self._limpeza, daemon=True).start()
         self.log(f"mestre-clipador v{VERSAO} ligado.")
@@ -438,84 +481,103 @@ class Motor:
     def desligar(self):
         self.rodando = False
         for m in list(self.monitores.values()):
-            m.encerrar()
+            m.parar = True
+            m.reiniciar()
 
-    # ------------------------------------------------------------ streamers
-    def vigiar(self, sid):
-        if sid in self.monitores and self.monitores[sid].is_alive():
-            return
-        self.banco.atualizar_streamer(sid, vigiando=1)
-        m = Monitor(self, sid)
+    # ------------------------------------------------------------ streamers e lives
+    def verificar_canais(self, sid):
+        """Ve em quais canais do streamer tem live agora (em paralelo)."""
+        canais = self.banco.canais(sid)
+        res = {}
+
+        def checar(c):
+            info, erro = self.info_link(c["link"], timeout=60)
+            ao_vivo = bool(info and info.get("live_status") == "is_live") or bool(info and info.get("is_live"))
+            res[c["id"]] = {**c, "ao_vivo": ao_vivo,
+                            "titulo": (info or {}).get("title", "") if ao_vivo else "",
+                            "aviso": "Live agendada, ainda não começou" if (info or {}).get("live_status") == "is_upcoming"
+                            else erro_amigavel(erro)}
+
+        ts = [threading.Thread(target=checar, args=(c,)) for c in canais]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        return [res[c["id"]] for c in canais]
+
+    def clipar_live(self, sid, canal_id, titulo=""):
+        if sid in self.monitores:
+            return {"ok": False, "erro": "Esse streamer já está sendo clipado. Pare antes de escolher outro canal."}
+        canal = self.banco.canal(canal_id)
+        if not canal or canal["streamer_id"] != sid:
+            return {"ok": False, "erro": "Canal não encontrado."}
+        sess = self.banco.nova_sessao(tipo="live", streamer_id=sid, canal_id=canal_id, link=canal["link"],
+                                      titulo=titulo, status="esperando")
+        self._iniciar_monitor(sid, sess, canal)
+        return {"ok": True, "sessao": sess}
+
+    def _iniciar_monitor(self, sid, sessao_id, canal):
+        m = Monitor(self, sid, sessao_id, canal)
         self.monitores[sid] = m
         m.start()
 
-    def parar_vigia(self, sid):
-        self.banco.atualizar_streamer(sid, vigiando=0)
-        m = self.monitores.pop(sid, None)
+    def parar_live(self, sid):
+        m = self.monitores.get(sid)
         if m:
             m.encerrar()
+            return True
+        return False
 
-    def info_link(self, link):
-        cmd = [*YTDLP, "-J", "--no-download", "--no-warnings",
-               "--flat-playlist", "--playlist-end", "1", link]
-        cookies = self.banco.cfg("cookies_navegador")
-        if cookies:
-            cmd[3:3] = ["--cookies-from-browser", cookies]
-        r = rodar(cmd, text=True, timeout=90)
-        if r.returncode != 0:
-            return None, ((r.stderr or "").strip().splitlines() or ["?"])[-1]
-        try:
-            return json.loads(r.stdout), ""
-        except ValueError:
-            return None, "resposta invalida do yt-dlp"
+    def monitor_terminou(self, m):
+        if self.monitores.get(m.sid) is m:
+            del self.monitores[m.sid]
+        s = self.banco.streamer(m.sid) or {}
+        self.log(f"[{s.get('nome', m.sid)}] live finalizada.")
 
     def perfil_do_link(self, link, info):
-        """Acha ou cria o perfil do streamer a partir das informacoes do link."""
+        """Acha o streamer dono do link (pelos canais cadastrados) ou cria um novo."""
         info = info or {}
-        extrator = (info.get("extractor_key") or info.get("extractor") or "").lower()
-        plataforma = "YouTube" if "youtube" in extrator else "Twitch" if "twitch" in extrator else \
-            "Kick" if "kick" in extrator else (extrator.title() or "Link")
-        canal = info.get("channel_url") or info.get("uploader_url") or ""
-        nome = info.get("channel") or info.get("uploader") or info.get("title") or "Streamer"
+        canal_url = info.get("channel_url") or info.get("uploader_url") or ""
+        for alvo in (canal_url, link):
+            if alvo:
+                c = self.banco.streamer_do_canal(alvo)
+                if c:
+                    return c["streamer_id"], c
+        nome = info.get("channel") or info.get("uploader") or "Streamer"
         handle = info.get("uploader_id") or ""
-        if plataforma == "YouTube" and canal:
-            vigiar = canal.rstrip("/") + "/live"
-        elif plataforma in ("Twitch", "Kick") and canal:
-            vigiar = canal
-        else:
-            vigiar = link
         handle = handle if handle.startswith("@") else ("@" + handle if handle else "@" + nome.replace(" ", ""))
-        existente = self.banco.streamer_por_link(vigiar)
-        if existente:
-            return existente["id"]
-        return self.banco.novo_streamer(
-            nome=nome, plataforma=plataforma, link=vigiar, handle=handle,
-            credito_video=f"via {handle}", credito_legenda=f"🎥 {handle}")
+        canal_link = canal_url or link
+        sid = self.banco.novo_streamer(nome=nome, link=canal_link, handle=handle,
+                                       credito_video=f"via {handle}", credito_legenda=f"🎥 {handle}")
+        self.banco.definir_canais(sid, [canal_link])
+        canais = self.banco.canais(sid)
+        return sid, (canais[0] if canais else None)
 
-    def clipar(self, link):
-        """Botao Clipar: live/canal -> vigia; video gravado -> clipa o video inteiro."""
+    def clipar_link(self, link):
+        """Campo de link do Inicio: video gravado -> fila de videos; live/canal -> clipa a live."""
         link = (link or "").strip()
         if not link.startswith("http"):
             return {"ok": False, "erro": "Cole um link que comece com http"}
         info, erro = self.info_link(link)
         if info is None and not link.rstrip("/").endswith("/live"):
             return {"ok": False, "erro": f"Não consegui ler esse link: {erro[:160]}"}
-        sid = self.perfil_do_link(link, info)
+        sid, canal = self.perfil_do_link(link, info)
         status = (info or {}).get("live_status")
         eh_video = info and info.get("_type") != "playlist" and status in (None, "not_live", "was_live", "post_live") \
             and info.get("duration")
         if eh_video:
-            vid = f"v{int(time.time() * 1000)}"
-            self.videos[vid] = {"id": vid, "titulo": info.get("title", "vídeo"), "sid": sid,
-                                "status": "Na fila", "clipes": 0}
-            self.enfileirar(2, "video", vid, link, sid)
-            return {"ok": True, "tipo": "video", "streamer": sid}
-        self.vigiar(sid)
-        return {"ok": True, "tipo": "live", "streamer": sid}
+            return self.clipar_video(sid, link, info.get("title", "vídeo"))
+        if canal is None:
+            return {"ok": False, "erro": "Não achei o canal desse link."}
+        return {**self.clipar_live(sid, canal["id"], (info or {}).get("title", "")), "tipo": "live"}
+
+    def clipar_video(self, sid, link, titulo=""):
+        sess = self.banco.nova_sessao(tipo="video", streamer_id=sid, link=link, titulo=titulo, status="na_fila")
+        self.fila_videos.put(sess)
+        return {"ok": True, "tipo": "video", "sessao": sess}
 
     # ------------------------------------------------------------ threads
     def _varredor(self):
-        """Procura blocos prontos de cada live e manda pra fila."""
         enfileirados = set()
         while self.rodando:
             for sid, m in list(self.monitores.items()):
@@ -523,7 +585,7 @@ class Motor:
                     if b in enfileirados:
                         continue
                     enfileirados.add(b)
-                    self.enfileirar(1, "bloco", sid, str(b), [str(x) for x in mesma])
+                    self.enfileirar(1, "bloco", m, str(b), [str(x) for x in mesma])
             time.sleep(10)
 
     def _trabalhador(self):
@@ -535,17 +597,29 @@ class Motor:
                 continue
             try:
                 if tarefa == "bloco":
-                    self.trabalhando = "Procurando momentos"
+                    self.trabalhando = "Procurando momentos nas lives"
                     self._processar_bloco(*args)
                 elif tarefa == "acabamento":
                     self.trabalhando = "Emoldurando clipe aprovado"
                     self._acabamento(*args)
-                elif tarefa == "video":
-                    self.trabalhando = "Clipando vídeo"
-                    self._clipar_video(*args)
             except Exception as ex:
                 self.log(f"Erro em {tarefa}: {ex}")
             self.trabalhando = ""
+
+    def _trabalhador_videos(self):
+        while self.rodando:
+            try:
+                sess = self.fila_videos.get(timeout=2)
+            except queue.Empty:
+                self.trabalhando_video = ""
+                continue
+            try:
+                self.trabalhando_video = "Clipando vídeo"
+                self._clipar_video(sess)
+            except Exception as ex:
+                self.banco.atualizar_sessao(sess, status="erro", erro=str(ex)[:200], fim=time.time())
+                self.log(f"Erro no vídeo {sess}: {ex}")
+            self.trabalhando_video = ""
 
     def _limpeza(self):
         while self.rodando:
@@ -593,9 +667,14 @@ class Motor:
             else:
                 self.apagar_arquivos(c)
                 self.banco.apagar_clip(c["id"])
+        # gravacoes de lives que ja acabaram
+        ativas = {str(m.sessao_id) for m in self.monitores.values()}
+        for p in (self.dados / "gravacoes").glob("*"):
+            if p.is_dir() and p.name not in ativas:
+                shutil.rmtree(p, ignore_errors=True)
 
     # ------------------------------------------------------------ etapas
-    def _nova_previa(self, sid, entrada, inicio, dur, pico_txt, cwd, origem):
+    def _nova_previa(self, sid, sessao_id, entrada, inicio, dur, pico_txt, cwd, origem):
         s = self.banco.streamer(sid)
         nome = f"{sid}_{datetime.now():%Y%m%d_%H%M%S_%f}"
         previa = self.dados / "clipes" / f"{nome}_previa.mp4"
@@ -614,30 +693,26 @@ class Motor:
         except Exception as ex:
             self.log(f"Legenda falhou nesse clipe ({ex}).")
         fala = " ".join(p[2] for p in palavras).strip()
-        cid = self.banco.novo_clip(streamer_id=sid, coluna="clipados", pico=pico_txt, origem=origem,
-                                   fala=fala, palavras=palavras, duracao=dur, previa=str(previa),
-                                   capa=str(capa) if capa.exists() else "")
+        cid = self.banco.novo_clip(streamer_id=sid, sessao_id=sessao_id, coluna="clipados", pico=pico_txt,
+                                   origem=origem, fala=fala, palavras=palavras, duracao=dur,
+                                   previa=str(previa), capa=str(capa) if capa.exists() else "")
+        self.banco.somar_clipe(sessao_id)
         self.log(f"[{s['nome'] if s else sid}] nova prévia em {pico_txt}.")
         return cid
 
-    def _processar_bloco(self, sid, bloco, mesma_sessao):
-        m = self.monitores.get(sid)
-        s = self.banco.streamer(sid)
+    def _processar_bloco(self, m, bloco, mesma_sessao):
+        s = self.banco.streamer(m.sid)
         b = Path(bloco)
         if not s or not b.exists():
             return
-        if m:
-            m.processados.add(b.name)
+        m.processados.add(b.name)
         db = volume_por_segundo(b)
         if len(db) == 0:
             self.log(f"[{s['nome']}] bloco sem áudio; reiniciando a gravação.")
-            if m:
-                m.reiniciar()
+            m.reiniciar()
             return
-        hist = m.historico if m else []
-        picos = achar_picos(db, hist, s)
-        if m:
-            m.historico = (m.historico + db.tolist())[-20000:]
+        picos = achar_picos(db, m.historico, s)
+        m.historico = (m.historico + db.tolist())[-20000:]
         mesma = [Path(x) for x in mesma_sessao]
         idx = mesma.index(b) if b in mesma else 0
         anterior = mesma[idx - 1] if idx > 0 and mesma[idx - 1].exists() else None
@@ -646,45 +721,47 @@ class Motor:
         for p in picos:
             antes, depois = int(s["antes"]), int(s["depois"])
             if anterior:
-                entrada = f"concat:{anterior.name}|{b.name}"
-                inicio = max(0.0, dur_ant + p - antes)
-                total = dur_ant + len(db)
+                entrada, inicio, total = f"concat:{anterior.name}|{b.name}", max(0.0, dur_ant + p - antes), dur_ant + len(db)
             else:
                 entrada, inicio, total = b.name, max(0.0, p - antes), len(db)
             dur = min(antes + depois, total - inicio)
             if dur < 8:
                 continue
             try:
-                self._nova_previa(sid, entrada, inicio, dur, fmt_hms(idx * bloco_seg + p), str(b.parent), "live")
-                if m:
-                    m.clipes_sessao += 1
+                self._nova_previa(m.sid, m.sessao_id, entrada, inicio, dur, fmt_hms(idx * bloco_seg + p),
+                                  str(b.parent), "live")
             except Exception as ex:
                 self.log(f"[{s['nome']}] erro ao cortar: {ex}")
-        # apaga blocos antigos (guarda os 2 ultimos para emendar cortes entre blocos)
         for velho in mesma[: max(0, idx - 1)]:
             try:
                 velho.unlink()
             except OSError:
                 pass
 
-    def _clipar_video(self, vid, link, sid):
-        job = self.videos[vid]
+    def _clipar_video(self, sess):
+        sv = self.banco.sessao(sess)
+        if not sv:
+            return
+        sid, link = sv["streamer_id"], sv["link"]
         s = self.banco.streamer(sid)
-        job["status"] = "Baixando"
-        pasta = self.dados / "videos_baixados"
-        pasta.mkdir(exist_ok=True)
+        if not s:
+            self.banco.atualizar_sessao(sess, status="erro", erro="streamer apagado", fim=time.time())
+            return
+        self.banco.atualizar_sessao(sess, status="baixando")
+        pasta = self.dados / "videos_baixados" / str(sess)
+        pasta.mkdir(parents=True, exist_ok=True)
         q = self.banco.cfg("qualidade") or "720"
-        cmd = [*YTDLP, "--no-warnings", "--no-playlist",
-               "-f", f"bv*[height<={q}]+ba/b[height<={q}]/bv*+ba/b", "--merge-output-format", "mp4",
-               "-o", str(pasta / "%(id)s.%(ext)s"), "--print", "after_move:filepath", link]
-        r = rodar(cmd, text=True)
+        r = rodar(self.ytdlp("--no-playlist", "-f", f"bv*[height<={q}]+ba/b[height<={q}]/bv*+ba/b",
+                             "--merge-output-format", "mp4", "-o", str(pasta / "%(id)s.%(ext)s"),
+                             "--print", "after_move:filepath", link), text=True)
         caminhos = [l.strip() for l in (r.stdout or "").splitlines() if l.strip()]
         if r.returncode != 0 or not caminhos or not Path(caminhos[-1]).exists():
-            job["status"] = "Erro ao baixar"
-            self.log(f"Não consegui baixar {link}: {(r.stderr or '').strip()[-200:]}")
+            self.banco.atualizar_sessao(sess, status="erro", erro=((r.stderr or "").strip()[-160:] or "não baixou"),
+                                        fim=time.time())
+            shutil.rmtree(pasta, ignore_errors=True)
             return
         arq = Path(caminhos[-1])
-        job["status"] = "Procurando momentos"
+        self.banco.atualizar_sessao(sess, status="clipando")
         db = volume_por_segundo(arq)
         hist = db.tolist()
         bloco = int(s["bloco_min"]) * 60
@@ -699,15 +776,11 @@ class Motor:
                 if dur < 8:
                     continue
                 try:
-                    self._nova_previa(sid, str(arq), inicio, dur, fmt_hms(pico), str(pasta), "video")
-                    job["clipes"] += 1
+                    self._nova_previa(sid, sess, str(arq), inicio, dur, fmt_hms(pico), str(pasta), "video")
                 except Exception as ex:
                     self.log(f"Erro ao cortar vídeo: {ex}")
-        job["status"] = "Pronto"
-        try:
-            arq.unlink()
-        except OSError:
-            pass
+        self.banco.atualizar_sessao(sess, status="clipado", fim=time.time())
+        shutil.rmtree(pasta, ignore_errors=True)
 
     def aprovar(self, cid):
         self.banco.mover_clip(cid, "autorizados", acabamento="fila", erro="")
@@ -722,21 +795,18 @@ class Motor:
         final = Path(c["previa"]).with_name(Path(c["previa"]).name.replace("_previa", "_final"))
         try:
             palavras = [tuple(p) for p in json.loads(c["palavras"] or "[]")]
-            renderizar_final(c["previa"], palavras, s, c["duracao"], final,
-                             self.dados / "tmp" / str(cid))
+            renderizar_final(c["previa"], palavras, s, c["duracao"], final, self.dados / "tmp" / str(cid))
         except Exception as ex:
             self.banco.atualizar_clip(cid, acabamento="erro", erro=str(ex)[:300])
             self.log(f"Erro ao emoldurar clipe {cid}: {ex}")
             return
-        legenda = self.legenda_sugerida(c, s)
+        legenda = self.legenda_sugerida(s)
         self.banco.atualizar_clip(cid, final=str(final), legenda=legenda)
         ok, erro = self.enviar_telegram(final, legenda)
-        self.banco.atualizar_clip(cid, acabamento="enviado" if ok else "pronto",
-                                  erro="" if ok else erro)
-        # o prazo de 1 dia dos Autorizados conta a partir de agora
-        self.banco.atualizar_clip(cid, movido_em=time.time())
+        self.banco.atualizar_clip(cid, acabamento="enviado" if ok else "pronto", erro="" if ok else erro,
+                                  movido_em=time.time())
 
-    def legenda_sugerida(self, c, s):
+    def legenda_sugerida(self, s):
         return ("[ESCREVA O GANCHO AQUI]\n\n"
                 + (f"{s.get('credito_legenda')}\n\n" if s.get("credito_legenda") else "")
                 + f"({assinatura()})")
@@ -756,8 +826,7 @@ class Motor:
         if not (self.banco.cfg("telegram_token") and chat):
             return False, "Telegram não configurado"
         with open(arquivo, "rb") as f:
-            r = self.tg("sendVideo", data={"chat_id": chat, "caption": legenda[:1000],
-                                           "supports_streaming": "true"},
+            r = self.tg("sendVideo", data={"chat_id": chat, "caption": legenda[:1000], "supports_streaming": "true"},
                         files={"video": (Path(arquivo).name, f, "video/mp4")})
         if r and r.get("ok"):
             return True, ""

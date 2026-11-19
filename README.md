@@ -17,7 +17,7 @@ Agora o mestre-clipador também é um **aplicativo**: sem pastas, sem `config.in
 **Sem instalador (para quem mexe no código):** baixe o projeto, rode o **`APP_1_INSTALAR.bat`** e abra pelo atalho que ele cria.
 
 O app tem 4 telas:
-   - **Início:** cole o link de uma live, de um canal ou de um vídeo e clique em **Clipar**. Live ou canal: ele vigia e grava sozinho quando a live abrir (vários streamers ao mesmo tempo). Vídeo gravado: clipa o vídeo inteiro.
+   - **Início:** dividido em **Lives**, **Vídeos** e **Streamers**. Cada streamer pode ter **vários canais** (YouTube, Twitch, Kick…). O botão **Clipar live** verifica em quais canais ele está ao vivo e você escolhe um (uma live por streamer de cada vez); se ninguém estiver ao vivo, o app espera a live começar. **Clipar vídeo** clipa vídeos já publicados numa fila separada, ao mesmo tempo que a live. Lives finalizadas e vídeos já clipados vão para grupos de **arquivados**, recolhidos.
    - **Galeria (Kanban):** cada momento chega como **prévia crua**. Você assiste e **aprova** ou **descarta**. Só o aprovado é emoldurado e vai pro Telegram.
    - **Ajustes:** um perfil por streamer — formato, moldura, câmera (marcada arrastando um retângulo na imagem da live), créditos, tamanho e quantidade de clipes. A prévia 9:16 muda na hora.
    - **Telegram:** 3 passos para conectar o bot, com teste de envio.

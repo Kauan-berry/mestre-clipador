@@ -68,20 +68,26 @@ function render() {
 }
 
 /* ------------------------------------------------------------ INICIO */
+const abertos = new Set();   // grupos de arquivados que voce abriu
+const ST_LIVE = { esperando: 'Esperando a live começar', gravando: 'Gravando', reconectando: 'Reconectando…', finalizada: 'Finalizada' };
+const ST_VIDEO = { na_fila: 'Na fila', baixando: 'Baixando o vídeo', clipando: 'Procurando os melhores momentos', clipado: 'Clipado', erro: 'Erro' };
+const hora = (ts) => new Date(ts * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
 function telaInicio() {
   tela.innerHTML = `
   <div><h1>O que vamos clipar hoje?</h1>
-  <p class="suave" style="font-size:15px;margin-top:6px">Cole o link de uma live, de um canal ou de um vídeo. O app grava, acha os melhores momentos e manda tudo pra Galeria.</p></div>
-  <section class="cartao" aria-label="Novo clipe">
-    <label for="link"><strong>Link da live, do canal ou do vídeo</strong></label>
+  <p class="suave" style="font-size:15px;margin-top:6px">Escolha um streamer salvo ou cole um link. O app grava, acha os melhores momentos e manda tudo pra Galeria.</p></div>
+  <section class="cartao" aria-label="Clipar por link">
+    <label for="link"><strong>Clipar por link</strong></label>
     <form class="linha" id="form-clipar">
-      <input id="link" class="campo-link" type="url" required placeholder="https://www.youtube.com/@canal/live">
+      <input id="link" class="campo-link" type="url" required placeholder="Link de uma live, de um canal ou de um vídeo">
       <button class="botao" id="btn-clipar" type="submit">Clipar</button>
     </form>
-    <p class="suave">YouTube, Twitch e Kick. Live ou canal: ele vigia e grava sozinho quando a live abrir. Vídeo gravado: ele clipa o vídeo inteiro.</p>
+    <p class="suave">Se o link for de um streamer salvo, entra nele. Se não, o app cria o streamer sozinho.</p>
   </section>
-  <section style="display:flex;flex-direction:column;gap:12px"><h2 class="titulo-sec">Agora</h2><div id="ini-agora"></div></section>
-  <section style="display:flex;flex-direction:column;gap:12px"><h2 class="titulo-sec">Streamers salvos</h2><div id="ini-salvos" class="grade"></div></section>`;
+  <section class="secao"><div class="secao-topo"><h2 class="titulo-sec">Lives</h2></div><div id="ini-lives" class="secao"></div></section>
+  <section class="secao"><div class="secao-topo"><h2 class="titulo-sec">Vídeos</h2></div><div id="ini-videos" class="secao"></div></section>
+  <section class="secao"><div class="secao-topo"><h2 class="titulo-sec">Streamers</h2><button class="botao-sec" id="novo-streamer">+ Adicionar streamer</button></div><div id="ini-streamers" class="grade"></div></section>`;
   $('#form-clipar').onsubmit = async (ev) => {
     ev.preventDefault();
     const b = $('#btn-clipar');
@@ -89,54 +95,164 @@ function telaInicio() {
     try {
       const r = await api('/api/clipar', { link: $('#link').value });
       if (!r.ok) aviso(r.erro || 'Não deu certo.', true);
-      else { aviso(r.tipo === 'video' ? 'Vídeo na fila! Os clipes vão aparecer na Galeria.' : 'Pronto! Vigiando a live desse streamer.'); $('#link').value = ''; }
+      else { aviso(r.tipo === 'video' ? 'Vídeo na fila! Os clipes vão aparecer na Galeria.' : 'Pronto! Clipando essa live.'); $('#link').value = ''; }
     } finally { b.disabled = false; b.textContent = 'Clipar'; await atualizar(); }
   };
+  $('#novo-streamer').onclick = () => editarStreamer(null);
   atualizarInicio();
 }
 
+function grupoArquivo(chave, titulo, itens) {
+  if (!itens.length) return '';
+  return `<details class="arquivo" data-grupo="${chave}" ${abertos.has(chave) ? 'open' : ''}><summary>${titulo} (${itens.length})</summary>${itens.join('')}</details>`;
+}
+
 function atualizarInicio() {
-  const agora = $('#ini-agora'), salvos = $('#ini-salvos');
-  if (!agora) return;
-  const ativos = E.streamers.filter((s) => s.ativo);
-  const sig = JSON.stringify([ativos.map((s) => [s.id, s.status, s.clipes_hoje, s.esperando]), E.videos, E.streamers.map((s) => [s.id, s.nome, s.ativo, s.camera])]);
-  // o relogio "gravando ha" anda sempre; o resto so redesenha quando muda
+  const lives = $('#ini-lives');
+  if (!lives) return;
   document.querySelectorAll('[data-desde]').forEach((el) => { el.textContent = relogio(E.agora - Number(el.dataset.desde)); });
+  const sig = JSON.stringify([E.sessoes.map((x) => [x.id, x.status, x.clipes, x.esperando, x.arquivado, x.erro]),
+    E.streamers.map((s) => [s.id, s.nome, s.canais.length, s.live && s.live.status, s.camera])]);
   if (sig === assinaturaInicio) return;
   assinaturaInicio = sig;
-  let html = ativos.map((s) => `
-    <div class="cartao" style="flex-direction:row;flex-wrap:wrap;align-items:center;gap:24px;margin-bottom:12px">
-      <div class="linha" style="flex:1 1 260px;gap:12px">
-        <span class="ponto ${s.gravando ? 'vivo' : 'espera'}" aria-hidden="true"></span>
-        <div><strong style="font-size:16px">${esc(s.status)} · ${esc(s.nome)}</strong><br>
-        <span class="suave">${s.gravando && s.desde ? `Gravando há <span data-desde="${s.desde}">${relogio(E.agora - s.desde)}</span>` : 'Checando a cada 1 minuto'}</span></div>
-      </div>
-      <div class="linha" style="gap:28px">
-        <div><div class="numero">${s.clipes_hoje}</div><span class="suave">clipes hoje</span></div>
-        <div><div class="numero" style="color:var(--rosa-claro)">${s.esperando}</div><span class="suave">esperando você</span></div>
-      </div>
-      <div class="linha">
-        <a class="botao-sec" style="display:inline-flex;align-items:center;text-decoration:none" href="#galeria" data-filtro="${s.id}">Ver galeria</a>
-        <button class="botao-sec" data-parar="${s.id}">Parar</button>
-      </div>
-    </div>`).join('');
-  html += (E.videos || []).filter((v) => v.status !== 'Pronto' || v.clipes).map((v) => `
-    <div class="cartao" style="margin-bottom:12px"><strong>Vídeo: ${esc(v.titulo)}</strong><span class="suave">${esc(v.status)} · ${v.clipes} clipes</span></div>`).join('');
-  agora.innerHTML = html || '<div class="vazio">Nada gravando agora. Cole um link ou escolha um streamer salvo.</div>';
+  const nomeSt = Object.fromEntries(E.streamers.map((s) => [s.id, s]));
 
-  salvos.innerHTML = E.streamers.map((s) => `
-    <div class="cartao streamer" style="border-color:${s.ativo ? 'var(--rosa)' : 'var(--borda)'}">
+  // ---------- lives
+  const ls = E.sessoes.filter((x) => x.tipo === 'live');
+  const ativa = (x) => ['esperando', 'gravando', 'reconectando'].includes(x.status);
+  const plat = (x) => { const s = nomeSt[x.streamer_id]; const c = s && s.canais.find((k) => k.id === x.canal_id); return c ? c.plataforma : ''; };
+  const cartaoLive = (x) => `
+    <div class="item" style="border-color:${ativa(x) ? 'var(--rosa)' : 'var(--borda)'}">
+      <div class="item-info"><span class="ponto ${x.status === 'gravando' ? 'vivo' : ativa(x) ? 'espera' : 'fim'}" aria-hidden="true"></span>
+        <div style="min-width:0"><strong>${esc(x.streamer)}</strong> <span class="chip">${esc(plat(x))}</span><br>
+        <span class="suave">${esc(ST_LIVE[x.status] || x.status)}${x.status === 'gravando' && x.inicio ? ` há <span data-desde="${x.inicio}">${relogio(E.agora - x.inicio)}</span>` : ''}${x.status === 'finalizada' && x.fim ? ` em ${hora(x.fim)}` : ''}${x.erro ? ` · ${esc(x.erro)}` : ''}</span></div></div>
+      <div class="linha" style="gap:24px"><div><div class="numero">${x.clipes}</div><span class="suave">clipes</span></div>
+        <div><div class="numero" style="color:var(--rosa-claro)">${x.esperando}</div><span class="suave">esperando você</span></div></div>
+      <div class="item-acoes"><a class="botao-sec" style="display:inline-flex;align-items:center;text-decoration:none" href="#galeria" data-filtro="${x.streamer_id}">Ver galeria</a>
+        ${ativa(x) ? `<button class="botao-sec" data-parar="${x.streamer_id}">Parar</button>` : `<button class="botao-sec" data-arquivar="${x.id}">Arquivar</button>`}</div>
+    </div>`;
+  const vis = ls.filter((x) => !x.arquivado);
+  const arqL = ls.filter((x) => x.arquivado).map((x) => `<div class="mini"><span><strong>${esc(x.streamer)}</strong> · ${esc(plat(x))} · ${x.inicio ? hora(x.inicio) : ''} · ${x.clipes} clipes</span><button class="botao-mini" data-desarquivar="${x.id}">Desarquivar</button></div>`);
+  lives.innerHTML = (vis.map(cartaoLive).join('') || '<div class="vazio">Nenhuma live agora. Clique em "Clipar live" num streamer abaixo.</div>') + grupoArquivo('lives', 'Lives arquivadas', arqL);
+
+  // ---------- videos
+  const vs = E.sessoes.filter((x) => x.tipo === 'video');
+  const emAndamento = vs.filter((x) => !x.arquivado && x.status !== 'clipado');
+  const cartaoVideo = (x) => `
+    <div class="item">
+      <div class="item-info"><span class="ponto ${x.status === 'erro' ? 'off' : 'espera'}" aria-hidden="true"></span>
+        <div style="min-width:0"><strong>${esc(x.titulo || 'Vídeo')}</strong><br><span class="suave">${esc(x.streamer)} · ${x.status === 'erro' ? 'Erro: ' + esc(x.erro) : 'Clipando: ' + esc(ST_VIDEO[x.status] || x.status)} · ${x.clipes} clipes até agora</span></div></div>
+      <div class="item-acoes">${x.status === 'erro' ? `<button class="botao-sec" data-arquivar="${x.id}">Arquivar</button>` : ''}</div>
+    </div>`;
+  const prontos = vs.filter((x) => x.arquivado || x.status === 'clipado').map((x) => `<div class="mini"><span><strong>${esc(x.titulo || 'Vídeo')}</strong> · ${esc(x.streamer)} · ${x.clipes} clipes${x.status === 'erro' ? ' · erro' : ''}${x.esperando ? ` · <span style="color:var(--rosa-claro)">${x.esperando} esperando você</span>` : ''}</span><a class="botao-mini" style="display:inline-flex;align-items:center;text-decoration:none" href="#galeria" data-filtro="${x.streamer_id}">Ver galeria</a></div>`);
+  $('#ini-videos').innerHTML = (emAndamento.map(cartaoVideo).join('') || '<div class="vazio">Nenhum vídeo sendo clipado. Use "Clipar vídeo" num streamer ou cole o link lá em cima.</div>') + grupoArquivo('videos', 'Clipados (arquivados)', prontos);
+
+  // ---------- streamers
+  $('#ini-streamers').innerHTML = E.streamers.map((s) => `
+    <div class="cartao streamer" style="border-color:${s.live ? 'var(--rosa)' : 'var(--borda)'}">
       <div class="linha" style="flex-wrap:nowrap"><span class="avatar" aria-hidden="true">${esc((s.nome || '?')[0].toUpperCase())}</span>
-      <div style="min-width:0"><strong>${esc(s.nome)}</strong><br><span class="suave">${esc(s.plataforma)} · ${s.camera ? 'câmera configurada' : 'sem câmera'}</span></div></div>
-      <div class="linha">
-        ${s.ativo ? `<button class="botao-sec" data-parar="${s.id}">Parar</button>` : `<button class="botao-sec" data-vigiar="${s.id}">Vigiar live</button>`}
-        <a class="botao-sec" style="display:inline-flex;align-items:center;text-decoration:none" href="#ajustes/${s.id}">Ajustes</a>
+      <div style="min-width:0"><strong>${esc(s.nome)}</strong><br>${s.canais.map((c) => `<span class="chip">${esc(c.plataforma)}</span>`).join('')}</div></div>
+      <span class="suave">${s.live ? `Clipando a live no ${esc(s.live.canal.plataforma)} · ${esc(ST_LIVE[s.live.status] || s.live.status)}` : `${s.canais.length} ${s.canais.length === 1 ? 'canal' : 'canais'} · ${s.camera ? 'câmera configurada' : 'sem câmera'}`}</span>
+      <div class="linha" style="gap:8px">
+        ${s.live ? `<button class="botao-sec" data-parar="${s.id}">Parar live</button>` : `<button class="botao" style="height:44px" data-clipar="${s.id}">Clipar live</button>`}
+        <button class="botao-sec" data-video="${s.id}">Clipar vídeo</button>
+        <button class="botao-sec" data-editar="${s.id}">Editar</button>
       </div>
-    </div>`).join('') || '<div class="vazio">Nenhum streamer ainda. Cole o link de uma live lá em cima.</div>';
+    </div>`).join('') || '<div class="vazio">Nenhum streamer ainda. Clique em "+ Adicionar streamer".</div>';
 
-  tela.querySelectorAll('[data-parar]').forEach((b) => { b.onclick = async () => { await api(`/api/streamers/${b.dataset.parar}/parar`, {}); aviso('Parou de vigiar.'); atualizar(); }; });
-  tela.querySelectorAll('[data-vigiar]').forEach((b) => { b.onclick = async () => { await api(`/api/streamers/${b.dataset.vigiar}/vigiar`, {}); aviso('Vigiando! Começa a gravar quando a live abrir.'); atualizar(); }; });
+  tela.querySelectorAll('details[data-grupo]').forEach((d) => { d.ontoggle = () => (d.open ? abertos.add(d.dataset.grupo) : abertos.delete(d.dataset.grupo)); });
+  tela.querySelectorAll('[data-parar]').forEach((b) => { b.onclick = async () => { await api(`/api/streamers/${b.dataset.parar}/parar`, {}); aviso('Parando… a live vai pra "finalizada".'); setTimeout(atualizar, 1500); }; });
+  tela.querySelectorAll('[data-arquivar]').forEach((b) => { b.onclick = async () => { await api(`/api/sessoes/${b.dataset.arquivar}/arquivar`, {}); atualizar(); }; });
+  tela.querySelectorAll('[data-desarquivar]').forEach((b) => { b.onclick = async () => { await api(`/api/sessoes/${b.dataset.desarquivar}/desarquivar`, {}); atualizar(); }; });
+  tela.querySelectorAll('[data-clipar]').forEach((b) => { b.onclick = () => escolherLive(Number(b.dataset.clipar)); });
+  tela.querySelectorAll('[data-video]').forEach((b) => { b.onclick = () => clipVideo(Number(b.dataset.video)); });
+  tela.querySelectorAll('[data-editar]').forEach((b) => { b.onclick = () => editarStreamer(Number(b.dataset.editar)); });
   tela.querySelectorAll('[data-filtro]').forEach((a) => { a.onclick = () => { filtro = a.dataset.filtro; }; });
+}
+
+/* ---- editor de streamer */
+function editarStreamer(sid) {
+  const s = sid ? E.streamers.find((x) => x.id === sid) : null;
+  const d = $('#dlg-streamer'), lista = $('#ed-canais');
+  $('#ed-titulo').textContent = s ? `Editar ${s.nome}` : 'Adicionar streamer';
+  $('#ed-nome').value = s ? s.nome : '';
+  const linha = (v) => {
+    const div = document.createElement('div');
+    div.className = 'linha'; div.style.flexWrap = 'nowrap';
+    div.innerHTML = `<input type="url" style="flex:1" aria-label="Link do canal" placeholder="https://www.youtube.com/@canal  ·  https://kick.com/canal" value="${esc(v)}"><button type="button" class="botao-mini" aria-label="Remover canal">Remover</button>`;
+    div.querySelector('button').onclick = () => { div.remove(); if (!lista.children.length) linha(''); };
+    lista.appendChild(div);
+  };
+  lista.innerHTML = '';
+  (s && s.canais.length ? s.canais.map((c) => c.link) : ['']).forEach(linha);
+  $('#ed-mais').onclick = () => linha('');
+  $('#ed-ajustes').hidden = !s; $('#ed-apagar').hidden = !s;
+  if (s) $('#ed-ajustes').href = `#ajustes/${s.id}`;
+  $('#ed-ajustes').onclick = () => d.close();
+  $('#ed-apagar').onclick = async () => {
+    if (!confirm(`Remover ${s.nome}? Os clipes já feitos continuam na Galeria.`)) return;
+    await api(`/api/streamers/${s.id}/apagar`, {}); d.close(); aviso('Streamer removido.'); atualizar();
+  };
+  $('#ed-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const canais = [...lista.querySelectorAll('input')].map((i) => i.value.trim()).filter(Boolean);
+    const corpo = { nome: $('#ed-nome').value.trim(), canais };
+    const r = s ? await api(`/api/streamers/${s.id}`, corpo) : await api('/api/streamers', corpo);
+    if (!r.ok) return aviso(r.erro || 'Não deu certo.', true);
+    d.close(); aviso(s ? 'Streamer atualizado.' : 'Streamer adicionado! Ajuste a clipagem dele em Ajustes.'); atualizar();
+  };
+  d.showModal();
+}
+
+/* ---- escolher em qual canal clipar a live */
+async function escolherLive(sid) {
+  const s = E.streamers.find((x) => x.id === sid);
+  const d = $('#dlg-clipar'), box = $('#cl-canais'), ok = $('#cl-ok');
+  let escolha = null;
+  $('#cl-titulo').textContent = `Clipar live · ${s.nome}`;
+  $('#cl-info').textContent = `Procurando em quais dos ${s.canais.length} canais ele está ao vivo…`;
+  box.innerHTML = s.canais.map((c) => `<div class="canal-op" aria-disabled="true"><span class="ponto off"></span><span><strong>${esc(c.plataforma)}</strong><br><span class="suave">${esc(c.link)}</span></span></div>`).join('');
+  ok.disabled = true; ok.textContent = 'Clipar esta live';
+  d.showModal();
+  const r = await api(`/api/streamers/${sid}/verificar`, {});
+  if (!d.open) return;
+  const vivos = (r.canais || []).filter((c) => c.ao_vivo);
+  $('#cl-info').textContent = vivos.length ? 'Escolha qual live clipar:' : 'Ele não está ao vivo agora. Escolha um canal para o app esperar a live começar:';
+  box.innerHTML = (r.canais || []).map((c) => `<div class="canal-op" role="radio" tabindex="0" aria-checked="false" data-canal="${c.id}" data-titulo="${esc(c.titulo)}" data-vivo="${c.ao_vivo}">
+      <span class="ponto ${c.ao_vivo ? 'vivo' : 'off'}" aria-hidden="true"></span>
+      <span style="min-width:0"><strong>${esc(c.plataforma)} · ${c.ao_vivo ? 'AO VIVO' : 'offline'}</strong><br><span class="suave">${esc(c.ao_vivo ? c.titulo : (c.aviso || c.link))}</span></span></div>`).join('');
+  box.querySelectorAll('[data-canal]').forEach((el) => {
+    const marcar = () => {
+      box.querySelectorAll('[data-canal]').forEach((x) => x.setAttribute('aria-checked', x === el));
+      escolha = el;
+      ok.disabled = false;
+      ok.textContent = el.dataset.vivo === 'true' ? 'Clipar esta live' : 'Esperar a live começar';
+    };
+    el.onclick = marcar;
+    el.onkeydown = (ev) => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); marcar(); } };
+  });
+  if (vivos.length === 1) box.querySelector(`[data-canal="${vivos[0].id}"]`).click();
+  ok.onclick = async () => {
+    if (!escolha) return;
+    const res = await api(`/api/streamers/${sid}/clipar`, { canal_id: Number(escolha.dataset.canal), titulo: escolha.dataset.titulo });
+    if (!res.ok) return aviso(res.erro, true);
+    d.close(); aviso(escolha.dataset.vivo === 'true' ? 'Clipando a live!' : 'Esperando a live começar.'); atualizar();
+  };
+}
+
+/* ---- clipar video ja publicado */
+function clipVideo(sid) {
+  const s = E.streamers.find((x) => x.id === sid);
+  const d = $('#dlg-video');
+  $('#vd-titulo').textContent = `Clipar vídeo · ${s.nome}`;
+  $('#vd-link').value = '';
+  $('#vd-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const r = await api(`/api/streamers/${sid}/video`, { link: $('#vd-link').value });
+    if (!r.ok) return aviso(r.erro, true);
+    d.close(); aviso('Vídeo na fila! Os clipes vão aparecer na Galeria.'); atualizar();
+  };
+  d.showModal();
 }
 
 /* ------------------------------------------------------------ GALERIA */
@@ -233,7 +349,7 @@ document.querySelectorAll('[data-fechar]').forEach((b) => { b.onclick = () => b.
 /* ------------------------------------------------------------ AJUSTES */
 function telaAjustes(r) {
   if (!E.streamers.length) {
-    tela.innerHTML = '<h1>Ajustes</h1><div class="vazio">Nenhum streamer ainda. Vá no Início e cole o link de uma live.</div>' + blocoGeral();
+    tela.innerHTML = '<h1>Ajustes</h1><div class="vazio">Nenhum streamer ainda. Vá no Início e clique em "+ Adicionar streamer".</div>' + blocoGeral();
     ligarGeral();
     return;
   }
@@ -276,11 +392,7 @@ function telaAjustes(r) {
         ${deslizante('rigor', 'Rigor (mais alto = só momentos muito fortes)', 95, 99.5, 0.5, '')}
         <p class="suave" id="resumo-clipes"></p>
       </section>
-      <section class="cartao"><h2>Link</h2>
-        <div class="campo"><label for="lk"><strong>Link vigiado</strong></label><input id="lk" type="text" name="link" value="${esc(s.link)}"></div>
-        <div class="campo"><label for="nm"><strong>Nome</strong></label><input id="nm" type="text" name="nome" value="${esc(s.nome)}"></div>
-      </section>
-      <div class="linha"><button class="botao" type="submit">Salvar ajustes</button><button type="button" class="botao-sec" id="apagar" style="margin-left:auto">Apagar streamer</button></div>
+      <div class="linha"><button class="botao" type="submit">Salvar ajustes</button><button type="button" class="botao-sec" id="editar-canais" style="margin-left:auto">Nome e canais</button></div>
     </div>
   </form>${blocoGeral()}`;
 
@@ -312,11 +424,7 @@ function telaAjustes(r) {
   if ($('#sem-moldura')) $('#sem-moldura').onclick = async () => { await api(`/api/streamers/${s.id}/moldura`, new ArrayBuffer(0), true); await atualizar(); render(); };
   if ($('#sem-camera')) $('#sem-camera').onclick = async () => { await api(`/api/streamers/${s.id}`, { camera: '' }); await atualizar(); render(); };
   $('#marcar-camera').onclick = () => marcarCamera(s.id, (val) => { form.camera.value = val; desenhar(); aviso('Câmera marcada. Clique em Salvar ajustes.'); });
-  $('#apagar').onclick = async () => {
-    if (!confirm(`Apagar ${s.nome}? Os clipes já feitos continuam na Galeria.`)) return;
-    await api(`/api/streamers/${s.id}/apagar`, {});
-    await atualizar(); location.hash = '#ajustes';
-  };
+  $('#editar-canais').onclick = () => editarStreamer(s.id);
   ligarGeral();
   desenhar();
 }

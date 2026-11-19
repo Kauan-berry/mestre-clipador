@@ -35,6 +35,36 @@
   <div class="linha"><span id="camera-valor" class="suave"></span><button type="button" class="botao" id="camera-salvar">Usar esta área</button></div>
 </dialog>
 
+<dialog id="dlg-streamer" class="modal">
+  <div class="modal-topo"><strong id="ed-titulo">Adicionar streamer</strong><button type="button" class="botao-sec" data-fechar>Fechar</button></div>
+  <form id="ed-form" style="display:flex;flex-direction:column;gap:14px">
+    <div class="campo"><label for="ed-nome"><strong>Nome</strong></label><input id="ed-nome" type="text" required placeholder="Ex.: Lipão"></div>
+    <div class="campo"><strong>Canais onde ele faz live</strong>
+      <p class="suave">Cole o link de cada canal: YouTube, Twitch, Kick…</p>
+      <div id="ed-canais" style="display:flex;flex-direction:column;gap:8px"></div>
+      <button type="button" class="botao-mini" id="ed-mais" style="align-self:flex-start">+ Outro canal</button>
+    </div>
+    <div class="linha"><button class="botao" type="submit">Salvar</button><a class="botao-sec" id="ed-ajustes" style="display:inline-flex;align-items:center;text-decoration:none" href="#ajustes">Ajustes de clipagem</a><button type="button" class="botao-sec" id="ed-apagar" style="margin-left:auto">Remover</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlg-clipar" class="modal">
+  <div class="modal-topo"><strong id="cl-titulo">Clipar live</strong><button type="button" class="botao-sec" data-fechar>Fechar</button></div>
+  <p class="suave" id="cl-info">Procurando em quais canais ele está ao vivo…</p>
+  <div id="cl-canais" style="display:flex;flex-direction:column;gap:8px;margin:12px 0" role="radiogroup" aria-label="Canais"></div>
+  <div class="linha"><button class="botao" id="cl-ok" disabled>Clipar esta live</button><span class="suave">Só uma live por streamer de cada vez.</span></div>
+</dialog>
+
+<dialog id="dlg-video" class="modal">
+  <div class="modal-topo"><strong id="vd-titulo">Clipar vídeo</strong><button type="button" class="botao-sec" data-fechar>Fechar</button></div>
+  <form id="vd-form" style="display:flex;flex-direction:column;gap:12px">
+    <label for="vd-link"><strong>Link do vídeo já publicado</strong></label>
+    <input id="vd-link" type="url" required placeholder="https://www.youtube.com/watch?v=...">
+    <p class="suave">Roda numa fila separada: dá para clipar vídeos enquanto a live dele está sendo clipada.</p>
+    <div><button class="botao" type="submit">Clipar vídeo</button></div>
+  </form>
+</dialog>
+
 <div id="aviso" class="aviso" role="status" aria-live="polite" hidden></div>
 <script src="/ui/app.js"></script>
 </body>

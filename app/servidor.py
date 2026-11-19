@@ -18,39 +18,40 @@ def criar_servidor(motor, porta=0):
 
     def estado():
         agora = time.time()
-        streamers = []
         clips = banco.clips()
         hoje = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+        streamers = []
         for s in banco.streamers():
             m = motor.monitores.get(s["id"])
             meus = [c for c in clips if c["streamer_id"] == s["id"]]
             streamers.append({
                 **s,
-                "ativo": bool(m),
-                "gravando": bool(m and m.gravando),
-                "status": m.status if m else "Parado",
-                "desde": m.desde if m else None,
+                "canais": banco.canais(s["id"]),
+                "live": {"sessao": m.sessao_id, "status": m.status, "canal": m.canal} if m else None,
                 "clipes_hoje": sum(1 for c in meus if c["criado_em"] >= hoje),
                 "esperando": sum(1 for c in meus if c["coluna"] == "clipados"),
                 "tem_moldura": bool(s["moldura"] and Path(s["moldura"]).exists()),
             })
         nomes = {s["id"]: s["nome"] for s in streamers}
+        sessoes = []
+        for x in banco.sessoes():
+            sessoes.append({**x, "streamer": nomes.get(x["streamer_id"], "?"),
+                            "esperando": sum(1 for c in clips if c.get("sessao_id") == x["id"] and c["coluna"] == "clipados")})
         lista = []
         for c in clips:
-            prazo = motor.prazo(c)
             lista.append({
                 "id": c["id"], "streamer_id": c["streamer_id"], "streamer": nomes.get(c["streamer_id"], "?"),
-                "coluna": c["coluna"], "pico": c["pico"], "fala": c["fala"], "duracao": c["duracao"],
-                "origem": c["origem"], "criado_em": c["criado_em"], "prazo": prazo,
+                "sessao_id": c.get("sessao_id"), "coluna": c["coluna"], "pico": c["pico"], "fala": c["fala"],
+                "duracao": c["duracao"], "origem": c["origem"], "criado_em": c["criado_em"], "prazo": motor.prazo(c),
                 "acabamento": c["acabamento"], "erro": c["erro"], "legenda": c["legenda"],
                 "tem_final": bool(c["final"] and Path(c["final"]).exists()),
             })
         cfg = banco.todas_cfg()
+        trabalho = " · ".join(t for t in (motor.trabalhando, motor.trabalhando_video) if t)
         return {
             "versao": VERSAO, "assinatura": assinatura(), "agora": agora,
-            "streamers": streamers, "clips": lista,
-            "videos": list(motor.videos.values()),
-            "fila": motor.fila.qsize(), "trabalhando": motor.trabalhando,
+            "streamers": streamers, "sessoes": sessoes, "clips": lista,
+            "fila": motor.fila.qsize() + motor.fila_videos.qsize(), "trabalhando": trabalho,
             "telegram": {"token_ok": bool(cfg["telegram_token"]), "chat_ok": bool(cfg["telegram_chat_id"])},
             "config": {k: v for k, v in cfg.items() if k not in ("telegram_token",)},
             "logs": motor.logs[-30:],
@@ -178,7 +179,24 @@ def criar_servidor(motor, porta=0):
 
         def rotear_post(self, caminho):
             if caminho == "/api/clipar":
-                return self.json(motor.clipar(self.corpo_json().get("link", "")))
+                return self.json(motor.clipar_link(self.corpo_json().get("link", "")))
+
+            if caminho == "/api/streamers":
+                d = self.corpo_json()
+                nome = (d.get("nome") or "").strip()
+                canais = [c for c in d.get("canais", []) if c.strip()]
+                if not nome or not canais:
+                    return self.json({"ok": False, "erro": "Coloque o nome e pelo menos um canal."})
+                handle = "@" + re.sub(r"\s+", "", nome)
+                sid = banco.novo_streamer(nome=nome, link=canais[0], handle=handle,
+                                          credito_video=f"via {handle}", credito_legenda=f"🎥 {handle}")
+                banco.definir_canais(sid, canais)
+                return self.json({"ok": True, "id": sid})
+
+            m = re.match(r"^/api/sessoes/(\d+)/(arquivar|desarquivar)$", caminho)
+            if m:
+                banco.atualizar_sessao(int(m.group(1)), arquivado=1 if m.group(2) == "arquivar" else 0)
+                return self.json({"ok": True})
 
             m = re.match(r"^/api/streamers/(\d+)(?:/(\w+))?$", caminho)
             if m:
@@ -187,6 +205,11 @@ def criar_servidor(motor, porta=0):
                     return self.json({"ok": False, "erro": "streamer não existe"}, 404)
                 if acao is None:
                     d = self.corpo_json()
+                    if "canais" in d:
+                        canais = [c for c in d.pop("canais") if c.strip()]
+                        if not canais:
+                            return self.json({"ok": False, "erro": "O streamer precisa de pelo menos um canal."})
+                        banco.definir_canais(sid, canais)
                     for k in ("antes", "depois", "bloco_min", "min_bloco", "max_bloco", "camera_largura"):
                         if k in d:
                             d[k] = int(d[k])
@@ -195,18 +218,25 @@ def criar_servidor(motor, porta=0):
                             d[k] = float(d[k])
                     if "credito_video" in d:  # emoji vira quadradinho no video
                         d["credito_video"] = re.sub(r"[^\w\s@&.,:!?'\-#()/|·]", "", d["credito_video"]).strip()
-                    d.pop("vigiando", None)
-                    d.pop("moldura", None)
+                    for k in ("vigiando", "moldura", "link", "plataforma"):
+                        d.pop(k, None)
                     banco.atualizar_streamer(sid, **d)
                     return self.json({"ok": True})
-                if acao == "vigiar":
-                    motor.vigiar(sid)
-                    return self.json({"ok": True})
+                if acao == "verificar":
+                    return self.json({"ok": True, "canais": motor.verificar_canais(sid)})
+                if acao == "clipar":
+                    d = self.corpo_json()
+                    return self.json(motor.clipar_live(sid, int(d.get("canal_id", 0)), d.get("titulo", "")))
+                if acao == "video":
+                    link = (self.corpo_json().get("link") or "").strip()
+                    if not link.startswith("http"):
+                        return self.json({"ok": False, "erro": "Cole o link do vídeo."})
+                    return self.json(motor.clipar_video(sid, link))
                 if acao == "parar":
-                    motor.parar_vigia(sid)
+                    motor.parar_live(sid)
                     return self.json({"ok": True})
                 if acao == "apagar":
-                    motor.parar_vigia(sid)
+                    motor.parar_live(sid)
                     banco.apagar_streamer(sid)
                     return self.json({"ok": True})
                 if acao == "moldura":

@@ -18,7 +18,7 @@ Agora o mestre-clipador também é um **aplicativo**: sem pastas, sem `config.in
 
 O app tem 4 telas:
    - **Início:** dividido em **Lives**, **Vídeos** e **Streamers**. Cada streamer pode ter **vários canais** (YouTube, Twitch, Kick…). O botão **Clipar live** verifica em quais canais ele está ao vivo e você escolhe um (uma live por streamer de cada vez); se ninguém estiver ao vivo, o app espera a live começar. **Clipar vídeo** clipa vídeos já publicados numa fila separada, ao mesmo tempo que a live. Lives finalizadas e vídeos já clipados vão para grupos de **arquivados**, recolhidos.
-   - **Galeria (Kanban):** cada momento chega como **prévia crua**. Você assiste e **aprova** ou **descarta**. Só o aprovado é emoldurado e vai pro Telegram.
+   - **Galeria (Kanban):** cada momento chega como **prévia crua**. Você assiste e **aprova** ou **descarta**. Só o aprovado é emoldurado e exportado: para o **Telegram** (fica na nuvem, fácil de pegar no celular), para uma **pasta no PC** (padrão: `Área de Trabalho\mestre-clipador`, junto com um `.txt` com a legenda sugerida) ou **para os dois**. Escolha em Ajustes → Geral. Sem Telegram configurado, o app salva no PC.
    - **Ajustes:** um perfil por streamer — formato, moldura, câmera (marcada arrastando um retângulo na imagem da live), créditos, tamanho e quantidade de clipes. A prévia 9:16 muda na hora.
    - **Telegram:** 3 passos para conectar o bot, com teste de envio.
 
@@ -27,7 +27,7 @@ O app tem 4 telas:
 | Coluna | Fica | Depois |
 | --- | --- | --- |
 | Clipados | 2 dias úteis | vai para Arquivados |
-| Autorizados | 1 dia | apagado do PC (já está no Telegram) |
+| Autorizados | 1 dia | sai do app (a cópia exportada no Telegram ou na sua pasta fica) |
 | Descartados | 1 hora (ou 2, nos Ajustes) | apagado |
 | Arquivados | 1 semana | apagado |
 

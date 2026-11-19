@@ -82,6 +82,8 @@ CONFIG_PADRAO = {
     "arquivados_dias": "7",
     "autorizados_dias": "1",
     "cookies_navegador": "",
+    "destino": "telegram",
+    "pasta_saida": "",
 }
 
 
@@ -124,6 +126,8 @@ class Banco:
         cols = [r["name"] for r in self.q("PRAGMA table_info(clips)")]
         if "sessao_id" not in cols:
             self.x("ALTER TABLE clips ADD COLUMN sessao_id INTEGER")
+        if "salvo" not in cols:
+            self.x("ALTER TABLE clips ADD COLUMN salvo TEXT DEFAULT ''")
         for s in self.q("SELECT id, link, plataforma FROM streamers"):
             if s["link"] and not self.um("SELECT id FROM canais WHERE streamer_id=?", (s["id"],)):
                 self.x("INSERT INTO canais(streamer_id, plataforma, link) VALUES(?, ?, ?)",

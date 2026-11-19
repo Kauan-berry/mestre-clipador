@@ -45,7 +45,7 @@ async function atualizar() {
   }
   const esperando = E.clips.filter((c) => c.coluna === 'clipados').length;
   $('#cont-galeria').textContent = esperando || '';
-  $('#alerta-tg').hidden = E.telegram.token_ok && E.telegram.chat_ok;
+  $('#alerta-tg').hidden = (E.telegram.token_ok && E.telegram.chat_ok) || E.config.destino === 'pasta';
   $('#trabalho').textContent = E.trabalhando ? `${E.trabalhando}… (${E.fila} na fila)` : (E.fila ? `${E.fila} na fila` : '');
   $('#versao').textContent = `v${E.versao} · ${E.assinatura}`;
   const t = rota().tela;
@@ -258,7 +258,7 @@ function clipVideo(sid) {
 /* ------------------------------------------------------------ GALERIA */
 const COLUNAS = [
   ['clipados', 'Clipados', 'vai pra Arquivados em'],
-  ['autorizados', 'Autorizados', 'some do PC em'],
+  ['autorizados', 'Autorizados', 'sai do app em'],
   ['descartados', 'Descartados', 'some em'],
   ['arquivados', 'Arquivados', 'some em'],
 ];
@@ -266,7 +266,7 @@ const COLUNAS = [
 function telaGaleria() {
   tela.innerHTML = `
   <div class="linha" style="justify-content:space-between;align-items:flex-end">
-    <div><h1>Galeria</h1><p class="suave" style="font-size:15px;margin-top:6px">Assista a prévia crua e decida. Só o que você aprova é emoldurado e vai pro Telegram.</p></div>
+    <div><h1>Galeria</h1><p class="suave" style="font-size:15px;margin-top:6px">Assista a prévia crua e decida. Só o que você aprova é emoldurado e exportado.</p></div>
     <div id="gal-filtros" class="filtros" role="group" aria-label="Filtrar por streamer"></div>
   </div>
   <div id="gal-kanban" class="kanban"></div>`;
@@ -297,10 +297,15 @@ function atualizarGaleria() {
       if (acao === 'copiar') { const c = E.clips.find((x) => x.id === Number(id)); await navigator.clipboard.writeText(c.legenda || ''); return aviso('Legenda copiada!'); }
       if (acao === 'baixar') { window.open(`/media/clip/${id}/final`, '_blank'); return; }
       await api(`/api/clips/${id}/${acao}`, {});
-      if (acao === 'aprovar') aviso('Aprovado! Emoldurando e mandando pro Telegram…');
+      if (acao === 'aprovar') aviso(msgAprovado());
       await atualizar();
     };
   });
+}
+
+function msgAprovado() {
+  const d = E.config.destino;
+  return d === 'pasta' ? 'Aprovado! Emoldurando e salvando no PC…' : d === 'ambos' ? 'Aprovado! Emoldurando, salvando no PC e mandando pro Telegram…' : 'Aprovado! Emoldurando e mandando pro Telegram…';
 }
 
 function cartaoClip(c, col, prazoTxt) {
@@ -317,10 +322,12 @@ function cartaoClip(c, col, prazoTxt) {
   if (col === 'clipados') acoes = `<div class="linha" style="gap:8px"><button class="botao" style="flex:1;height:42px" data-acao="aprovar:${c.id}">Aprovar</button><button class="botao-sec" style="flex:1;height:42px" data-acao="descartar:${c.id}">Descartar</button></div>`;
   if (col === 'autorizados') {
     selo = c.acabamento === 'enviado' ? '<span class="selo ok">Enviado ao Telegram</span>'
-      : c.acabamento === 'pronto' ? `<span class="selo erro" title="${esc(c.erro)}">Pronto, mas não foi pro Telegram</span>`
+      : c.acabamento === 'salvo' ? `<span class="selo ok" title="${esc(c.erro || c.salvo)}">Salvo no PC</span>`
+      : c.acabamento === 'enviado_salvo' ? '<span class="selo ok">Telegram + PC</span>'
+      : c.acabamento === 'pronto' ? `<span class="selo erro" title="${esc(c.erro)}">Pronto, mas não foi exportado</span>`
       : c.acabamento === 'erro' ? `<span class="selo erro" title="${esc(c.erro)}">Erro ao emoldurar</span>`
       : '<span class="selo fila">Emoldurando…</span>';
-    acoes = `<div class="linha" style="gap:8px">${c.tem_final ? `<button class="botao-mini" data-acao="copiar:${c.id}">Copiar legenda</button><button class="botao-mini" data-acao="baixar:${c.id}">Baixar</button>` : ''}${['erro', 'pronto'].includes(c.acabamento) ? `<button class="botao-mini" data-acao="reenviar:${c.id}">Tentar de novo</button>` : ''}</div>`;
+    acoes = `<div class="linha" style="gap:8px">${c.tem_final ? `<button class="botao-mini" data-acao="copiar:${c.id}">Copiar legenda</button>${c.salvo ? `<button class="botao-mini" data-acao="abrir_pasta:${c.id}">Abrir pasta</button>` : `<button class="botao-mini" data-acao="baixar:${c.id}">Baixar</button>`}` : ''}${['erro', 'pronto'].includes(c.acabamento) ? `<button class="botao-mini" data-acao="reenviar:${c.id}">Tentar de novo</button>` : ''}</div>`;
   }
   if (col === 'descartados') acoes = `<button class="botao-mini" data-acao="voltar:${c.id}">Desfazer</button>`;
   if (col === 'arquivados') acoes = `<button class="botao-mini" data-acao="voltar:${c.id}">Voltar pra Clipados</button>`;
@@ -339,7 +346,7 @@ function abrirPlayer(id) {
   const acoes = $('#player-acoes');
   acoes.innerHTML = c.coluna === 'clipados' ? `<button class="botao" data-p="aprovar">Aprovar</button><button class="botao-sec" data-p="descartar">Descartar</button>` : '';
   acoes.style.marginTop = '12px';
-  acoes.querySelectorAll('[data-p]').forEach((b) => { b.onclick = async () => { await api(`/api/clips/${id}/${b.dataset.p}`, {}); d.close(); if (b.dataset.p === 'aprovar') aviso('Aprovado! Emoldurando e mandando pro Telegram…'); atualizar(); }; });
+  acoes.querySelectorAll('[data-p]').forEach((b) => { b.onclick = async () => { await api(`/api/clips/${id}/${b.dataset.p}`, {}); d.close(); if (b.dataset.p === 'aprovar') aviso(msgAprovado()); atualizar(); }; });
   d.showModal();
   v.play().catch(() => {});
 }
@@ -479,6 +486,8 @@ function blocoGeral() {
   const op = (nome, valor, lista) => `<select name="${nome}">${lista.map(([v, t]) => `<option value="${v}" ${String(c[nome]) === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
   return `<section class="cartao" style="margin-top:8px"><h2>Geral (vale para todos)</h2>
     <form id="form-geral" class="grade" style="align-items:end">
+      <label class="campo"><strong>Clipes aprovados vão para</strong>${op('destino', c.destino, [['telegram', 'Telegram (nuvem, fácil no celular)'], ['pasta', 'Pasta no PC'], ['ambos', 'Os dois']])}</label>
+      <label class="campo" style="grid-column:span 2"><strong>Pasta no PC</strong><span class="linha" style="flex-wrap:nowrap"><input type="text" name="pasta_saida" style="flex:1" value="${esc(c.pasta_saida)}" placeholder="${esc(E.pasta_saida)}"><button type="button" class="botao-sec" id="abrir-saida">Abrir</button></span></label>
       <label class="campo"><strong>Legenda automática</strong>${op('modelo_legenda', c.modelo_legenda, [['small', 'Melhor (mais lenta)'], ['base', 'Mais rápida']])}</label>
       <label class="campo"><strong>Qualidade da gravação</strong>${op('qualidade', c.qualidade, [['480', '480p'], ['720', '720p'], ['1080', '1080p']])}</label>
       <label class="campo"><strong>Descartados somem em</strong>${op('descartados_horas', c.descartados_horas, [['1', '1 hora'], ['2', '2 horas']])}</label>
@@ -488,6 +497,8 @@ function blocoGeral() {
 function ligarGeral() {
   const f = $('#form-geral');
   if (f) f.onchange = async () => { await api('/api/config', Object.fromEntries(new FormData(f).entries())); aviso('Salvo.'); atualizar(); };
+  const ab = $('#abrir-saida');
+  if (ab) ab.onclick = () => api('/api/abrir_pasta', {});
 }
 
 /* ------------------------------------------------------------ TELEGRAM */
@@ -495,7 +506,7 @@ function telaTelegram() {
   const t = E.telegram;
   const num = (ok, n) => `<span class="passo-num ${ok ? 'ok' : ''}" aria-hidden="true">${ok ? '✓' : n}</span>`;
   tela.innerHTML = `
-  <div><h1>Conectar o Telegram</h1><p class="suave" style="font-size:15px;margin-top:6px">Os clipes aprovados chegam no seu celular. São 3 passos, uma vez só.</p></div>
+  <div><h1>Conectar o Telegram</h1><p class="suave" style="font-size:15px;margin-top:6px">Os clipes aprovados chegam no seu celular. São 3 passos, uma vez só. Se nos Ajustes você escolher só "Pasta no PC", não precisa do Telegram.</p></div>
   <section class="cartao passo">${num(t.token_ok, 1)}<div class="campo" style="flex:1;min-width:0">
     <h2>Criar o seu bot</h2>
     <p class="suave" style="font-size:14px">No Telegram, abra o @BotFather, mande /newbot e escolha um nome. Ele te dá um token. Copie clicando nele.</p>

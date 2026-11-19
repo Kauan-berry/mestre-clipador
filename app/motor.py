@@ -28,7 +28,7 @@ try:
 except ImportError:  # pragma: no cover
     requests = None
 
-VERSAO = "2.1"
+VERSAO = "2.2"
 _A = "RmVpdG8gY29tIG1lc3RyZS1jbGlwYWRvcg=="
 TAXA_AUDIO = 8000
 SEM_JANELA = 0x08000000 if os.name == "nt" else 0  # nao abre janela preta no Windows
@@ -267,6 +267,24 @@ def renderizar_final(previa, palavras, s, dur, destino, pasta_tmp):
     shutil.rmtree(tmp, ignore_errors=True)
     if r.returncode != 0:
         raise RuntimeError((r.stderr or "ffmpeg falhou").strip()[-300:])
+
+
+def area_de_trabalho():
+    if os.name == "nt":
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(520)
+            ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, buf)  # CSIDL_DESKTOPDIRECTORY
+            if buf.value:
+                return Path(buf.value)
+        except Exception:
+            pass
+    return Path.home() / "Desktop"
+
+
+def nome_de_arquivo(t):
+    t = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", t or "").strip()
+    return re.sub(r"\s+", "_", t)[:60] or "clipe"
 
 
 def fmt_hms(seg):
@@ -802,9 +820,38 @@ class Motor:
             return
         legenda = self.legenda_sugerida(s)
         self.banco.atualizar_clip(cid, final=str(final), legenda=legenda)
-        ok, erro = self.enviar_telegram(final, legenda)
-        self.banco.atualizar_clip(cid, acabamento="enviado" if ok else "pronto", erro="" if ok else erro,
-                                  movido_em=time.time())
+        destino = self.banco.cfg("destino") or "telegram"
+        tg_ok = bool(self.banco.cfg("telegram_token") and self.banco.cfg("telegram_chat_id"))
+        enviado, salvo, erro = False, "", ""
+        if destino in ("telegram", "ambos") and tg_ok:
+            enviado, erro = self.enviar_telegram(final, legenda)
+        # pasta no PC: quando escolhido, ou como plano B se o Telegram nao estiver configurado/falhar
+        if destino in ("pasta", "ambos") or not enviado:
+            try:
+                salvo = str(self.salvar_no_pc(final, legenda, s, c))
+                if not tg_ok and destino == "telegram":
+                    erro = "Telegram não configurado: salvei no PC"
+            except Exception as ex:
+                erro = (erro + " · " if erro else "") + f"não salvei no PC ({ex})"
+        status = "enviado_salvo" if enviado and salvo else "enviado" if enviado else "salvo" if salvo else "pronto"
+        self.banco.atualizar_clip(cid, acabamento=status, erro=erro, salvo=salvo, movido_em=time.time())
+
+    def pasta_saida(self):
+        p = (self.banco.cfg("pasta_saida") or "").strip()
+        return Path(p) if p else area_de_trabalho() / "mestre-clipador"
+
+    def salvar_no_pc(self, final, legenda, s, c):
+        pasta = self.pasta_saida()
+        pasta.mkdir(parents=True, exist_ok=True)
+        base = f"{nome_de_arquivo(s.get('nome'))}_{datetime.now():%Y-%m-%d_%Hh%M}_{nome_de_arquivo(c.get('pico'))}"
+        destino = pasta / f"{base}.mp4"
+        n = 2
+        while destino.exists():
+            destino = pasta / f"{base}_{n}.mp4"
+            n += 1
+        shutil.copy(final, destino)
+        destino.with_suffix(".txt").write_text(legenda, encoding="utf-8")
+        return destino
 
     def legenda_sugerida(self, s):
         return ("[ESCREVA O GANCHO AQUI]\n\n"

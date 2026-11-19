@@ -13,6 +13,18 @@ from motor import BASE, VERSAO, assinatura, limpar_token, rodar
 UI = BASE / "ui"
 
 
+def abrir_no_explorer(alvo):
+    """Abre a pasta (ou mostra o arquivo selecionado) no Explorador do Windows."""
+    import os
+    import subprocess
+    alvo = Path(alvo)
+    if os.name == "nt":
+        if alvo.is_file():
+            subprocess.Popen(["explorer", "/select,", str(alvo)])
+        else:
+            subprocess.Popen(["explorer", str(alvo)])
+
+
 def criar_servidor(motor, porta=0):
     banco = motor.banco
 
@@ -45,6 +57,7 @@ def criar_servidor(motor, porta=0):
                 "duracao": c["duracao"], "origem": c["origem"], "criado_em": c["criado_em"], "prazo": motor.prazo(c),
                 "acabamento": c["acabamento"], "erro": c["erro"], "legenda": c["legenda"],
                 "tem_final": bool(c["final"] and Path(c["final"]).exists()),
+                "salvo": c.get("salvo") or "",
             })
         cfg = banco.todas_cfg()
         trabalho = " · ".join(t for t in (motor.trabalhando, motor.trabalhando_video) if t)
@@ -54,6 +67,7 @@ def criar_servidor(motor, porta=0):
             "fila": motor.fila.qsize() + motor.fila_videos.qsize(), "trabalhando": trabalho,
             "telegram": {"token_ok": bool(cfg["telegram_token"]), "chat_ok": bool(cfg["telegram_chat_id"])},
             "config": {k: v for k, v in cfg.items() if k not in ("telegram_token",)},
+            "pasta_saida": str(motor.pasta_saida()),
             "logs": motor.logs[-30:],
         }
 
@@ -251,7 +265,7 @@ def criar_servidor(motor, porta=0):
                     banco.atualizar_streamer(sid, moldura=str(destino))
                     return self.json({"ok": True})
 
-            m = re.match(r"^/api/clips/(\d+)/(aprovar|descartar|voltar|reenviar)$", caminho)
+            m = re.match(r"^/api/clips/(\d+)/(aprovar|descartar|voltar|reenviar|abrir_pasta)$", caminho)
             if m:
                 cid, acao = int(m.group(1)), m.group(2)
                 c = banco.clip(cid)
@@ -265,6 +279,9 @@ def criar_servidor(motor, porta=0):
                     banco.mover_clip(cid, "clipados", acabamento="", erro="")
                 elif acao == "reenviar":
                     motor.aprovar(cid)
+                elif acao == "abrir_pasta":
+                    alvo = Path(c.get("salvo") or "")
+                    abrir_no_explorer(alvo if alvo.exists() else motor.pasta_saida())
                 return self.json({"ok": True})
 
             if caminho == "/api/telegram/token":
@@ -288,9 +305,15 @@ def criar_servidor(motor, porta=0):
                                                   "text": "👋 mestre-clipador conectado! Os clipes aprovados vão chegar aqui."})
                 return self.json({"ok": bool(r and r.get("ok")), "erro": (r or {}).get("description", "")})
 
+            if caminho == "/api/abrir_pasta":
+                p = motor.pasta_saida()
+                p.mkdir(parents=True, exist_ok=True)
+                abrir_no_explorer(p)
+                return self.json({"ok": True})
             if caminho == "/api/config":
                 for k, v in self.corpo_json().items():
-                    if k in ("modelo_legenda", "qualidade", "descartados_horas", "cookies_navegador"):
+                    if k in ("modelo_legenda", "qualidade", "descartados_horas", "cookies_navegador",
+                             "destino", "pasta_saida"):
                         banco.set_cfg(k, v)
                 return self.json({"ok": True})
             return self.json({"erro": "não encontrado"}, 404)

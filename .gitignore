@@ -11,3 +11,6 @@ moldura.png
 
 # app
 app/__pycache__/
+dist/
+build/Output/
+*.spec

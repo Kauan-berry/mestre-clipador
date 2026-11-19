@@ -34,6 +34,26 @@ TAXA_AUDIO = 8000
 SEM_JANELA = 0x08000000 if os.name == "nt" else 0  # nao abre janela preta no Windows
 
 
+EMPACOTADO = getattr(sys, "frozen", False)
+BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+PASTA_BIN = Path(sys.executable).resolve().parent / "bin" if EMPACOTADO else None
+if PASTA_BIN and PASTA_BIN.exists():
+    # ffmpeg, ffprobe, yt-dlp e deno vem junto com o instalador
+    os.environ["PATH"] = str(PASTA_BIN) + os.pathsep + os.environ.get("PATH", "")
+    YTDLP = [str(PASTA_BIN / "yt-dlp.exe")]
+else:
+    YTDLP = [sys.executable, "-m", "yt_dlp"]
+
+
+def atualizar_ytdlp(log):
+    """O YouTube muda direto: no app empacotado o yt-dlp.exe se atualiza sozinho."""
+    if not EMPACOTADO:
+        return
+    r = rodar([*YTDLP, "-U"], text=True)
+    linha = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()[-1:] or [""]
+    log(f"yt-dlp: {linha[0][:120]}")
+
+
 def assinatura():
     return base64.b64decode(_A).decode("utf-8")
 
@@ -300,7 +320,7 @@ class Monitor(threading.Thread):
 
     def link_do_video(self, s):
         q = self.motor.banco.cfg("qualidade") or "720"
-        cmd = [sys.executable, "-m", "yt_dlp", "-g", "--no-warnings",
+        cmd = [*YTDLP, "-g", "--no-warnings",
                "-f", f"b[height<={q}]/bv*[height<={q}]+ba/b/bv*+ba"]
         cookies = self.motor.banco.cfg("cookies_navegador")
         if cookies:
@@ -409,6 +429,7 @@ class Motor:
         for s in self.banco.streamers():
             if s["vigiando"]:
                 self.vigiar(s["id"])
+        threading.Thread(target=atualizar_ytdlp, args=(self.log,), daemon=True).start()
         threading.Thread(target=self._trabalhador, daemon=True).start()
         threading.Thread(target=self._varredor, daemon=True).start()
         threading.Thread(target=self._limpeza, daemon=True).start()
@@ -435,7 +456,7 @@ class Motor:
             m.encerrar()
 
     def info_link(self, link):
-        cmd = [sys.executable, "-m", "yt_dlp", "-J", "--no-download", "--no-warnings",
+        cmd = [*YTDLP, "-J", "--no-download", "--no-warnings",
                "--flat-playlist", "--playlist-end", "1", link]
         cookies = self.banco.cfg("cookies_navegador")
         if cookies:
@@ -653,7 +674,7 @@ class Motor:
         pasta = self.dados / "videos_baixados"
         pasta.mkdir(exist_ok=True)
         q = self.banco.cfg("qualidade") or "720"
-        cmd = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--no-playlist",
+        cmd = [*YTDLP, "--no-warnings", "--no-playlist",
                "-f", f"bv*[height<={q}]+ba/b[height<={q}]/bv*+ba/b", "--merge-output-format", "mp4",
                "-o", str(pasta / "%(id)s.%(ext)s"), "--print", "after_move:filepath", link]
         r = rodar(cmd, text=True)

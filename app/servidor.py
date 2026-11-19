@@ -8,9 +8,9 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from motor import VERSAO, assinatura, limpar_token, rodar
+from motor import BASE, VERSAO, assinatura, limpar_token, rodar
 
-UI = Path(__file__).resolve().parent / "ui"
+UI = BASE / "ui"
 
 
 def criar_servidor(motor, porta=0):

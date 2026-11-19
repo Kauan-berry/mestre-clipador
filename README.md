@@ -12,9 +12,11 @@ O **mestre-clipador** fica de olho numa live (YouTube, Twitch ou Kick), grava e 
 
 Agora o mestre-clipador também é um **aplicativo**: sem pastas, sem `config.ini`, sem janela preta.
 
-1. Baixe o projeto (**Code → Download ZIP**) e extraia.
-2. Rode o **`APP_1_INSTALAR.bat`**. Na primeira vez ele instala Python, FFmpeg e Deno; quando pedir, rode de novo. No fim ele cria o atalho **mestre-clipador** na Área de Trabalho.
-3. Abra pelo atalho. O app tem 4 telas:
+**Jeito mais fácil:** baixe o instalador em [Releases](https://github.com/Kauan-berry/mestre-clipador/releases/latest) (`mestre-clipador-setup-*.exe`), abra e clique em Avançar. Já vem tudo junto (FFmpeg, yt-dlp, legenda): não precisa instalar Python. Se o Windows avisar "O Windows protegeu o computador", clique em **Mais informações → Executar assim mesmo** (o app não tem assinatura digital paga). Na primeira legenda ele baixa o modelo (uns 500 MB), então o primeiro clipe demora um pouco mais.
+
+**Sem instalador (para quem mexe no código):** baixe o projeto, rode o **`APP_1_INSTALAR.bat`** e abra pelo atalho que ele cria.
+
+O app tem 4 telas:
    - **Início:** cole o link de uma live, de um canal ou de um vídeo e clique em **Clipar**. Live ou canal: ele vigia e grava sozinho quando a live abrir (vários streamers ao mesmo tempo). Vídeo gravado: clipa o vídeo inteiro.
    - **Galeria (Kanban):** cada momento chega como **prévia crua**. Você assiste e **aprova** ou **descarta**. Só o aprovado é emoldurado e vai pro Telegram.
    - **Ajustes:** um perfil por streamer — formato, moldura, câmera (marcada arrastando um retângulo na imagem da live), créditos, tamanho e quantidade de clipes. A prévia 9:16 muda na hora.
